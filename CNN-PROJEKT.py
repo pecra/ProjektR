@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torchmetrics.classification import MulticlassAUROC
+from torchmetrics.classification import BinaryAUROC
 # check if CUDA is available
 train_on_gpu = torch.cuda.is_available()
 
@@ -255,9 +257,11 @@ model.eval()
 prvi = True
 cifar_outputs = []
 # iterate over test data
+drekus = 0
 for data, target in test_loader:
     # move tensors to GPU if CUDA is available
-    
+    #if(drekus > 100):
+        #break
     if train_on_gpu:
         data, target = data.cuda(), target.cuda()
     # forward pass: compute predicted outputs by passing inputs to the model
@@ -283,11 +287,14 @@ for data, target in test_loader:
     # compare predictions to true label
     correct_tensor = pred.eq(target.data.view_as(pred))
     correct = np.squeeze(correct_tensor.numpy()) if not train_on_gpu else np.squeeze(correct_tensor.cpu().numpy())
+
     # calculate test accuracy for each object class
     for i in range(batch_size):
         label = target.data[i]
         class_correct[label] += correct[i].item()
         class_total[label] += 1
+    
+    drekus+= 20
 
 print(cifar_outputs.shape)
 
@@ -333,7 +340,7 @@ labels = {}
 data_keys = {}
 # iterate over test data
 for data, target in svhn_test_loader:
-    if counter > 10000:
+    if counter == 10000:
         break
     # move tensors to GPU if CUDA is available
     if train_on_gpu:
@@ -421,4 +428,79 @@ def histo(dataCIFAR,dataSVHN):
     plt.legend()
     plt.show()
 
+
+def histoCustom(dataCIFAR,dataSVHN, title, x_axis_title, density_bool, log_bool, bins_num):
+    if not isinstance(dataCIFAR, list):
+        dataCIFAR = dataCIFAR.flatten()
+    if not isinstance(dataSVHN, list):
+        dataSVHN = dataSVHN.flatten()
+    plt.figure(figsize=(20,10))
+    plt.title(title)
+    plt.xlabel(x_axis_title)
+    plt.hist(dataCIFAR, label="CIFAR10", density=density_bool,log = log_bool, bins=bins_num) #log = True
+    plt.hist(dataSVHN, label="SVHN", density=density_bool,log = log_bool, bins=bins_num) #log = True
+    plt.legend()
+    plt.show()
+
+
+#funkcija za izracunat entropiju, tu je samo da mi list comperhension ne izgleda odvrtano**2
+def entropy(array):
+    return sum([-x*np.log(x) for x in array])
+
+#vjerojatnosti klasifikacije u postotcima (ono od 0 do 1)
+cifar_probs = torch.nn.functional.softmax(torch.tensor(cifar_outputs)).numpy()
+svhn_probs = torch.nn.functional.softmax(torch.tensor(svhn_outputs)).numpy()
+
+
+#najvece vjerojatnosti za klasifikaciju tj jedan dugi touple
+cifar_maxprobs = np.amax(cifar_probs, axis = 1)
+svfn_maxprobs = np.amax(svhn_probs, axis = 1)
+
+print(cifar_maxprobs)
+#vrlo odvratan nacin za izvadit podatke o tocnim klasama podataka CIFRA10 (mogla sam i gore dok evaluira ih skupit al sam tu da mi je blizu)
+prvi = False
+targets = []
+for data, target in test_loader:
+    if(prvi):
+        prvi = False
+        targets = target.detach().numpy()
+    else:
+        targets.append(target.detach().numpy())
+
+#liste entropija za podatke, vrlo dugi touple
+cifar_entropy = [entropy(x) for x in cifar_probs]
+svhn_entropy = [entropy(x) for x in svhn_probs]
+
+#multiclass auroc za evaluaciju mreze opcenito, macro znaci da averagea aurocove za sve klase
+#tensor(0.9837)
+metric = MulticlassAUROC(num_classes=10, average="macro", thresholds=None)
+print(metric(torch.tensor(cifar_probs), torch.tensor(np.concatenate(targets).ravel())))
+
+#predas samo maksane vjerojatnosti i kao target klase sa 1 za indistribution, 0 za outofdistribution i da ti auroc
+#iz ovog mby da napravimo roc curve
+#tensor(0.8306)
+metric2 =  BinaryAUROC(thresholds=None)
+class_targets = np.concatenate((np.ones((10000), dtype=int), np.zeros((10000), dtype=int)))
+print(metric2(torch.tensor(np.concatenate((cifar_maxprobs, svfn_maxprobs))), torch.tensor(class_targets)))
+
+
+
+#ostavi ovo zakomentirano osim ako ne zelis jedno 20 grafova
+"""
 histo(np.amax(cifar_outputs, axis = 1),np.amax(svhn_outputs, axis = 1))
+histoCustom(np.amax(cifar_outputs, axis = 1),np.amax(svhn_outputs, axis = 1), "Trained of CIFAR10", "logits", True, False, 1000)
+histoCustom(np.amax(cifar_outputs, axis = 1),np.amax(svhn_outputs, axis = 1), "Trained of CIFAR10", "logits", False, False, 1000)
+histoCustom(np.amax(cifar_outputs, axis = 1),np.amax(svhn_outputs, axis = 1), "Trained of CIFAR10", "logits", True, False, 100)
+histoCustom(np.amax(cifar_outputs, axis = 1),np.amax(svhn_outputs, axis = 1), "Trained of CIFAR10", "logits", False, False, 100)
+histoCustom(np.amax(cifar_probs, axis = 1),np.amax(svhn_probs, axis = 1), "Trained on CIFAR10", "max softmax prob", True, False, 1000)
+histoCustom(np.amax(cifar_probs, axis = 1),np.amax(svhn_probs, axis = 1), "Trained on CIFAR10", "max softmax prob", False, False, 1000)
+histoCustom(np.amax(cifar_probs, axis = 1),np.amax(svhn_probs, axis = 1), "Trained on CIFAR10", "max softmax prob", True, False, 100)
+histoCustom(np.amax(cifar_probs, axis = 1),np.amax(svhn_probs, axis = 1), "Trained on CIFAR10", "max softmax prob", False, False, 100)
+histoCustom(np.amax(cifar_probs, axis = 1),np.amax(svhn_probs, axis = 1), "Trained on CIFAR10", "max softmax prob", True, True, 100)
+histoCustom(np.amax(cifar_probs, axis = 1),np.amax(svhn_probs, axis = 1), "Trained on CIFAR10", "max softmax prob", False, True, 100)
+"""
+"""histoCustom(cifar_entropy,svhn_entropy, "Trained on CIFAR10", "entropy of probabilities", True, False, 1000)
+histoCustom(cifar_entropy,svhn_entropy, "Trained on CIFAR10", "entropy of probabilities", False, False, 1000)
+histoCustom(cifar_entropy,svhn_entropy, "Trained on CIFAR10", "entropy of probabilities", True, False, 100)
+histoCustom(cifar_entropy,svhn_entropy, "Trained on CIFAR10", "entropy of probabilities", False, False, 100)
+"""
